@@ -1,0 +1,32 @@
+{
+  "name": "openrouter-reviewer",
+  "version": "0.1.0",
+  "description": "CLI for requesting external OpenRouter reviews of SDD artifacts, diffs, and files.",
+  "type": "module",
+  "packageManager": "npm@10.8.2",
+  "bin": {
+    "or-review": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skill-template",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.3",
+    "vitest": "^1.6.0"
+  }
+}
