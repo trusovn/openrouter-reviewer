@@ -12,6 +12,27 @@ export type AssessmentInput = {
   note: string;
 };
 
+type AssessmentRecord = AssessmentInput & {
+  assessedAt: string;
+};
+
+type RunAssessmentFile = {
+  runId: string;
+  assessments: AssessmentRecord[];
+};
+
+async function readRunAssessments(assessmentPath: string, runId: string): Promise<RunAssessmentFile> {
+  if (!existsSync(assessmentPath)) return { runId, assessments: [] };
+  const parsed = JSON.parse(await readFile(assessmentPath, "utf8")) as Partial<RunAssessmentFile> | AssessmentRecord;
+  if (Array.isArray((parsed as Partial<RunAssessmentFile>).assessments)) {
+    return { runId, assessments: (parsed as RunAssessmentFile).assessments };
+  }
+  if ("modelAlias" in parsed) {
+    return { runId, assessments: [parsed as AssessmentRecord] };
+  }
+  return { runId, assessments: [] };
+}
+
 export async function recordAssessment(repoRoot: string, config: OrReviewConfig, input: AssessmentInput): Promise<{ runDir: string; ledgerPath: string }> {
   if (!Number.isInteger(input.usefulness) || input.usefulness < 1 || input.usefulness > 5) {
     throw new UserError("--usefulness must be an integer from 1 to 5.");
@@ -29,11 +50,18 @@ export async function recordAssessment(repoRoot: string, config: OrReviewConfig,
   }
 
   const assessment = { ...input, assessedAt: new Date().toISOString() };
-  await writeFile(path.join(runDir, "assessment.json"), `${JSON.stringify(assessment, null, 2)}\n`, "utf8");
+  const assessmentPath = path.join(runDir, "assessment.json");
+  const runAssessments = await readRunAssessments(assessmentPath, input.runId);
+  const existingIndex = runAssessments.assessments.findIndex((entry) => entry.modelAlias === input.modelAlias);
+  if (existingIndex >= 0) {
+    runAssessments.assessments[existingIndex] = assessment;
+  } else {
+    runAssessments.assessments.push(assessment);
+  }
+  await writeFile(assessmentPath, `${JSON.stringify(runAssessments, null, 2)}\n`, "utf8");
 
   const ledgerPath = config.assessmentLedger.path || defaultAssessmentLedgerPath();
   await mkdir(path.dirname(ledgerPath), { recursive: true });
   await appendFile(ledgerPath, `${JSON.stringify(assessment)}\n`, "utf8");
   return { runDir, ledgerPath };
 }
-

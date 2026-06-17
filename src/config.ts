@@ -112,6 +112,13 @@ export function applyCliOverrides(config: OrReviewConfig, overrides: CliConfigOv
   return configSchema.parse(merged);
 }
 
+export function assertReviewConfigReady(config: OrReviewConfig): void {
+  const missingModelId = config.models.find((model) => model.id.trim() === "");
+  if (missingModelId) {
+    throw new UserError(`Model ${missingModelId.alias} is missing an OpenRouter model id. Edit or-review.config.json before running a review.`);
+  }
+}
+
 export async function writeInitialConfig(cwd: string, destination = projectConfigPath(cwd)): Promise<string> {
   const resolved = path.resolve(cwd, destination);
   if (existsSync(resolved)) {

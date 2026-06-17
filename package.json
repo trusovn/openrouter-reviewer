@@ -5,10 +5,10 @@
   "type": "module",
   "packageManager": "npm@10.8.2",
   "bin": {
-    "or-review": "./dist/cli.js"
+    "or-review": "./dist/src/cli.js"
   },
   "files": [
-    "dist",
+    "dist/src",
     "skill-template",
     "README.md"
   ],

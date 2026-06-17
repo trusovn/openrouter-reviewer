@@ -37,11 +37,15 @@ export function shouldSkipByName(filePath: string): string | undefined {
   return undefined;
 }
 
+function isInsideRoot(relativePath: string): boolean {
+  return relativePath !== "" && !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+}
+
 export function isGitIgnored(repoRoot: string, filePath: string): boolean {
   if (!existsSync(path.join(repoRoot, ".git"))) return false;
   const relative = path.relative(repoRoot, path.resolve(repoRoot, filePath));
   try {
-    execFileSync("git", ["check-ignore", "--quiet", relative], { cwd: repoRoot, stdio: "ignore" });
+    execFileSync("git", ["check-ignore", "--quiet", "--no-index", relative], { cwd: repoRoot, stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -58,7 +62,7 @@ export function redactSecrets(input: string): { text: string; redacted: boolean 
     }
   );
 
-  text = text.replace(/^(\s*(?:export\s+)?[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*=\s*).+$/gim, (_match, prefix: string) => {
+  text = text.replace(/^(\s*[+-]?\s*(?:export\s+)?[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*=\s*).+$/gim, (_match, prefix: string) => {
     redacted = true;
     return `${prefix}[REDACTED]`;
   });
@@ -79,6 +83,9 @@ export function redactSecrets(input: string): { text: string; redacted: boolean 
 export async function safeReadFile(repoRoot: string, filePath: string, limits: ContextLimits): Promise<PreparedInput> {
   const resolved = path.resolve(repoRoot, filePath);
   const relative = path.relative(repoRoot, resolved);
+  if (!isInsideRoot(relative)) {
+    return { path: filePath, included: false, skippedReason: "outside repo root" };
+  }
   const nameReason = shouldSkipByName(relative);
   if (nameReason) return { path: relative, included: false, skippedReason: nameReason };
   if (isGitIgnored(repoRoot, relative)) return { path: relative, included: false, skippedReason: "gitignored" };
@@ -142,4 +149,3 @@ export function buildContextPreview(inputs: PreparedInput[]): string {
 export function hasSensitiveFieldName(name: string): boolean {
   return sensitiveFieldPattern.test(name);
 }
-

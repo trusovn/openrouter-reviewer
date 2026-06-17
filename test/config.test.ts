@@ -2,7 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyCliOverrides, configSchema, loadConfig, requireApiKey, writeInitialConfig } from "../src/config.js";
+import { applyCliOverrides, assertReviewConfigReady, configSchema, loadConfig, requireApiKey, writeInitialConfig } from "../src/config.js";
 
 async function tempDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "or-review-config-"));
@@ -17,6 +17,7 @@ describe("config", () => {
 
     expect(config.models[0]?.id).toBe("");
     expect(config.provider).toEqual({ dataCollection: "deny", zdr: false });
+    expect(() => assertReviewConfigReady(config)).toThrow("missing an OpenRouter model id");
   });
 
   it("loads project config and applies CLI overrides last", async () => {
@@ -52,6 +53,6 @@ describe("config", () => {
     });
 
     expect(applyCliOverrides(config, { maxFileBytes: 10, assessmentLedgerPath: "/tmp/ledger.jsonl" }).limits.maxFileBytes).toBe(10);
+    expect(() => assertReviewConfigReady(config)).not.toThrow();
   });
 });
-

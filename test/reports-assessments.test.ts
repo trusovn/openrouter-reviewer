@@ -24,7 +24,10 @@ describe("reports and assessments", () => {
     const cwd = await tempDir();
     await writeFile(path.join(cwd, "reviewed.txt"), "unchanged", "utf8");
     const config = configSchema.parse({
-      models: [{ alias: "a", id: "model-a", pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 } }],
+      models: [
+        { alias: "a", id: "model-a", pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 } },
+        { alias: "b", id: "model-b", pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 } }
+      ],
       reports: { dir: ".or-review/runs" },
       assessmentLedger: { path: path.join(cwd, "ledger.jsonl") }
     });
@@ -37,6 +40,13 @@ describe("reports and assessments", () => {
         raw: { raw: true },
         error: "boom",
         findings: []
+      },
+      {
+        alias: "b",
+        modelId: "model-b",
+        ok: true,
+        raw: { raw: true },
+        findings: []
       }
     ]);
     const reportJson = JSON.parse(await readFile(written.reportJsonPath, "utf8")) as { models: Array<{ ok: boolean; error?: string }> };
@@ -46,12 +56,22 @@ describe("reports and assessments", () => {
 
     const before = await readFile(path.join(cwd, "reviewed.txt"), "utf8");
     await recordAssessment(cwd, config, { runId: written.runId, modelAlias: "a", usefulness: 4, note: "useful" });
+    await recordAssessment(cwd, config, { runId: written.runId, modelAlias: "b", usefulness: 5, note: "very useful" });
     await recordAssessment(cwd, config, { runId: written.runId, modelAlias: "a", usefulness: 3, note: "less useful" });
     const after = await readFile(path.join(cwd, "reviewed.txt"), "utf8");
+    const assessmentJson = JSON.parse(await readFile(path.join(written.runDir, "assessment.json"), "utf8")) as {
+      assessments: Array<{ modelAlias: string; note: string }>;
+    };
 
     expect(after).toBe(before);
-    expect(await readFile(path.join(written.runDir, "assessment.json"), "utf8")).toContain("less useful");
-    expect((await readFile(path.join(cwd, "ledger.jsonl"), "utf8")).trim().split("\n")).toHaveLength(2);
+    expect(assessmentJson.assessments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ modelAlias: "a", note: "less useful" }),
+        expect.objectContaining({ modelAlias: "b", note: "very useful" })
+      ])
+    );
+    expect(assessmentJson.assessments).toHaveLength(2);
+    expect((await readFile(path.join(cwd, "ledger.jsonl"), "utf8")).trim().split("\n")).toHaveLength(3);
   });
 
   it("rejects invalid assessment inputs", async () => {
@@ -63,4 +83,3 @@ describe("reports and assessments", () => {
     await expect(recordAssessment(cwd, config, { runId: "missing", modelAlias: "a", usefulness: 9, note: "x" })).rejects.toThrow("1 to 5");
   });
 });
-

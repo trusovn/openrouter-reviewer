@@ -44,6 +44,15 @@ describe("safety utilities", () => {
     await expect(safeReadFile(cwd, "bin.dat", { ...limits, maxFileBytes: 100 })).resolves.toMatchObject({ included: false, skippedReason: "binary file" });
   });
 
+  it("skips paths that resolve outside the repo root", async () => {
+    const cwd = await tempDir();
+    const outside = await tempDir();
+    await writeFile(path.join(outside, "outside.txt"), "do not include", "utf8");
+
+    await expect(safeReadFile(cwd, path.relative(cwd, path.join(outside, "outside.txt")), { maxFileBytes: 1000, maxContextChars: 1000 }))
+      .resolves.toMatchObject({ included: false, skippedReason: "outside repo root" });
+  });
+
   it("tracks truncated inputs and keeps raw secrets out of assembled context", () => {
     const assembled = assembleContext(
       [{ path: "a.txt", included: true, content: "PASSWORD=raw-secret\nhello", redacted: false }],
@@ -54,4 +63,3 @@ describe("safety utilities", () => {
     expect(assembled.context.length).toBeLessThanOrEqual(20);
   });
 });
-

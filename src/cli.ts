@@ -1,8 +1,10 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { assertWithinBudget, estimateRunCost } from "./budget.js";
 import { collectDiffContext, collectFilesContext, collectSddContext, type ContextBundle } from "./collectors.js";
-import { loadConfig, requireApiKey, writeInitialConfig, type CliConfigOverrides, type OrReviewConfig } from "./config.js";
+import { assertReviewConfigReady, loadConfig, requireApiKey, writeInitialConfig, type CliConfigOverrides, type OrReviewConfig } from "./config.js";
 import { UserError } from "./errors.js";
 import { executeModels } from "./openrouter.js";
 import { recordAssessment } from "./assessments.js";
@@ -15,6 +17,12 @@ const packageMetadata = {
 
 type ReviewOptions = CliConfigOverrides & {
   instruction?: string;
+};
+
+export type CliDependencies = {
+  cwd?: string;
+  executeModels?: typeof executeModels;
+  log?: (message: string) => void;
 };
 
 function parseNumber(value: string): number {
@@ -49,23 +57,28 @@ function cliOverrides(options: Record<string, unknown>): CliConfigOverrides {
 async function runReview(
   cwd: string,
   options: ReviewOptions,
-  collect: (config: OrReviewConfig) => Promise<ContextBundle>
+  collect: (config: OrReviewConfig) => Promise<ContextBundle>,
+  dependencies: CliDependencies
 ): Promise<void> {
   if (!options.instruction) throw new UserError("--instruction is required.");
   const config = await loadConfig(cwd, cliOverrides(options));
+  assertReviewConfigReady(config);
   const bundle = await collect(config);
   const estimate = estimateRunCost(config, bundle);
   assertWithinBudget(config, estimate);
   const apiKey = requireApiKey();
-  const results = await executeModels(config, bundle, apiKey);
+  const results = await (dependencies.executeModels ?? executeModels)(config, bundle, apiKey);
   const written = await writeRunReport(cwd, config, bundle, results);
-  console.log(`Run: ${written.runDir}`);
-  console.log(`Markdown: ${written.reportMdPath}`);
-  console.log(`JSON: ${written.reportJsonPath}`);
+  const log = dependencies.log ?? console.log;
+  log(`Run: ${written.runDir}`);
+  log(`Markdown: ${written.reportMdPath}`);
+  log(`JSON: ${written.reportJsonPath}`);
 }
 
-export function createProgram(): Command {
+export function createProgram(dependencies: CliDependencies = {}): Command {
   const program = new Command();
+  const cwd = dependencies.cwd ?? process.cwd();
+  const log = dependencies.log ?? console.log;
 
   program
     .name("or-review")
@@ -78,8 +91,8 @@ export function createProgram(): Command {
     .description("Create an or-review config skeleton.")
     .option("--output <path>", "Config path to write")
     .action(async (options: { output?: string }) => {
-      const written = await writeInitialConfig(process.cwd(), options.output);
-      console.log(`Wrote ${written}`);
+      const written = await writeInitialConfig(cwd, options.output);
+      log(`Wrote ${written}`);
     });
 
   addConfigFlags(program.command("sdd"))
@@ -87,7 +100,7 @@ export function createProgram(): Command {
     .requiredOption("--feature <slug>", "Feature slug under docs/features")
     .requiredOption("--instruction <goal>", "Review instruction")
     .action(async (options: ReviewOptions & { feature: string }) => {
-      await runReview(process.cwd(), options, (config) => collectSddContext(process.cwd(), options.feature, options.instruction ?? "", config));
+      await runReview(cwd, options, (config) => collectSddContext(cwd, options.feature, options.instruction ?? "", config), dependencies);
     });
 
   addConfigFlags(program.command("diff"))
@@ -95,7 +108,7 @@ export function createProgram(): Command {
     .option("--base <ref>", "Base ref", "HEAD")
     .requiredOption("--instruction <goal>", "Review instruction")
     .action(async (options: ReviewOptions & { base: string }) => {
-      await runReview(process.cwd(), options, (config) => collectDiffContext(process.cwd(), options.base, options.instruction ?? "", config));
+      await runReview(cwd, options, (config) => collectDiffContext(cwd, options.base, options.instruction ?? "", config), dependencies);
     });
 
   addConfigFlags(program.command("files"))
@@ -103,7 +116,7 @@ export function createProgram(): Command {
     .requiredOption("--file <path...>", "File path(s) to review")
     .requiredOption("--instruction <goal>", "Review instruction")
     .action(async (options: ReviewOptions & { file: string[] }) => {
-      await runReview(process.cwd(), options, (config) => collectFilesContext(process.cwd(), options.file, options.instruction ?? "", config));
+      await runReview(cwd, options, (config) => collectFilesContext(cwd, options.file, options.instruction ?? "", config), dependencies);
     });
 
   addConfigFlags(program.command("assess <run-id>"))
@@ -112,21 +125,30 @@ export function createProgram(): Command {
     .requiredOption("--usefulness <score>", "Usefulness score 1-5", parseNumber)
     .requiredOption("--note <text>", "Assessment note")
     .action(async (runId: string, options: CliConfigOverrides & { model: string; usefulness: number; note: string }) => {
-      const config = await loadConfig(process.cwd(), cliOverrides(options));
-      const result = await recordAssessment(process.cwd(), config, {
+      const config = await loadConfig(cwd, cliOverrides(options));
+      const result = await recordAssessment(cwd, config, {
         runId,
         modelAlias: options.model,
         usefulness: options.usefulness,
         note: options.note
       });
-      console.log(`Assessment: ${result.runDir}/assessment.json`);
-      console.log(`Ledger: ${result.ledgerPath}`);
+      log(`Assessment: ${result.runDir}/assessment.json`);
+      log(`Ledger: ${result.ledgerPath}`);
     });
 
   return program;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+function isCliEntrypoint(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isCliEntrypoint()) {
   createProgram().parseAsync(process.argv).catch((error: unknown) => {
     if (error instanceof UserError) {
       console.error(error.message);

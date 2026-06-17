@@ -48,6 +48,16 @@ export type ModelExecutionResult = {
 };
 
 type FetchLike = typeof fetch;
+const defaultOpenRouterBaseUrl = "https://openrouter.ai/api/v1";
+
+class OpenRouterHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+  }
+}
 
 function reviewPrompt(bundle: ContextBundle, perspective?: string): string {
   return [
@@ -64,7 +74,13 @@ function reviewPrompt(bundle: ContextBundle, perspective?: string): string {
 
 function parseModelJson(raw: unknown): unknown {
   const message = (raw as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content;
-  if (typeof message === "string") return JSON.parse(message);
+  if (typeof message === "string") {
+    try {
+      return JSON.parse(message);
+    } catch {
+      throw new Error("Model response content was not valid JSON.");
+    }
+  }
   return message;
 }
 
@@ -85,6 +101,12 @@ function normalize(alias: string, parsed: unknown): NormalizedFinding[] {
       confidence: Number(value.confidence ?? 0)
     };
   });
+}
+
+function isStructuredOutputRejection(error: unknown): boolean {
+  if (!(error instanceof OpenRouterHttpError) || error.status < 400 || error.status >= 500) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("response_format") || message.includes("json_schema") || message.includes("structured output");
 }
 
 async function callOpenRouter(
@@ -117,7 +139,8 @@ async function callOpenRouter(
     body.messages = [{ role: "user", content: `${reviewPrompt(bundle, model.perspective)}\n\nReturn valid JSON only.` }];
   }
 
-  const response = await fetchImpl("https://openrouter.ai/api/v1/chat/completions", {
+  const baseUrl = (process.env.OPENROUTER_BASE_URL ?? defaultOpenRouterBaseUrl).replace(/\/$/, "");
+  const response = await fetchImpl(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -128,7 +151,7 @@ async function callOpenRouter(
 
   const responseBody = await response.text();
   if (!response.ok) {
-    throw new Error(responseBody || `OpenRouter HTTP ${response.status}`);
+    throw new OpenRouterHttpError(responseBody || `OpenRouter HTTP ${response.status}`, response.status);
   }
   return JSON.parse(responseBody);
 }
@@ -146,7 +169,7 @@ export async function executeModels(
         try {
           raw = await callOpenRouter(fetchImpl, apiKey, config, model, bundle, true);
         } catch (error) {
-          if (!String((error as Error).message).toLowerCase().includes("response_format")) throw error;
+          if (!isStructuredOutputRejection(error)) throw error;
           raw = await callOpenRouter(fetchImpl, apiKey, config, model, bundle, false);
         }
         const parsed = parseModelJson(raw);
@@ -164,4 +187,3 @@ export async function executeModels(
     })
   );
 }
-

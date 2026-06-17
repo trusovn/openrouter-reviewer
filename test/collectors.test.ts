@@ -52,6 +52,45 @@ describe("collectors", () => {
     expect(bundle.context).not.toContain("ignore me");
   });
 
+  it("redacts diff secrets and skips secret-like changed files", async () => {
+    const cwd = await tempDir();
+    execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd });
+    await writeFile(path.join(cwd, ".gitignore"), "ignored.log\n", "utf8");
+    await writeFile(path.join(cwd, "app.txt"), "safe\n", "utf8");
+    await writeFile(path.join(cwd, ".env"), "API_KEY=old-secret\n", "utf8");
+    await writeFile(path.join(cwd, "ignored.log"), "ignored base\n", "utf8");
+    await writeFile(path.join(cwd, "large.txt"), "small\n", "utf8");
+    execFileSync("git", ["add", "app.txt", ".env", ".gitignore", "large.txt"], { cwd });
+    execFileSync("git", ["add", "-f", "ignored.log"], { cwd });
+    execFileSync("git", ["commit", "-m", "base"], { cwd, stdio: "ignore" });
+    await writeFile(path.join(cwd, "app.txt"), "safe\nAPI_KEY=new-secret\n", "utf8");
+    await writeFile(path.join(cwd, ".env"), "API_KEY=raw-env-secret\n", "utf8");
+    await writeFile(path.join(cwd, "ignored.log"), "ignored raw\n", "utf8");
+    await writeFile(path.join(cwd, "large.txt"), "x".repeat(40), "utf8");
+
+    const bundle = await collectDiffContext(cwd, "HEAD", "review", configSchema.parse({ ...config, limits: { maxFileBytes: 30, maxContextChars: 120000 } }));
+
+    expect(bundle.context).not.toContain("new-secret");
+    expect(bundle.context).not.toContain("raw-env-secret");
+    expect(bundle.context).not.toContain("ignored raw");
+    expect(bundle.context).not.toContain("x".repeat(40));
+    expect(bundle.context).toContain("API_KEY=[REDACTED]");
+    expect(bundle.preview).toContain("git diff HEAD -- app.txt (redacted)");
+    expect(bundle.preview).toContain("git diff HEAD -- .env: secret-like file name");
+    expect(bundle.preview).toContain("git diff HEAD -- ignored.log: gitignored");
+    expect(bundle.preview).toContain("git diff HEAD -- large.txt: larger than maxFileBytes (30)");
+  });
+
+  it("does not enumerate SDD feature paths outside the repo root", async () => {
+    const cwd = await tempDir();
+    const bundle = await collectSddContext(cwd, "../../..", "review", config);
+
+    expect(bundle.context).toBe("");
+    expect(bundle.preview).not.toContain("../../..");
+  });
+
   it("collects only explicit files", async () => {
     const cwd = await tempDir();
     await writeFile(path.join(cwd, "a.txt"), "include", "utf8");
@@ -63,4 +102,3 @@ describe("collectors", () => {
     expect(bundle.context).not.toContain("exclude");
   });
 });
-
