@@ -119,6 +119,21 @@ describe("OpenRouter execution", () => {
     expect(results[1]?.findings).toHaveLength(1);
   });
 
+  it("preserves free-model provider routing failures with a dataCollection deny hint", async () => {
+    const freeConfig = configSchema.parse({
+      models: [{ alias: "free", id: "provider/free:free", pricing: { inputUsdPerMillionTokens: 0, outputUsdPerMillionTokens: 0 } }],
+      provider: { dataCollection: "deny", zdr: false },
+      budget: { maxUsdPerRun: 0, maxOutputTokensPerModel: 123 }
+    });
+    const fetchImpl = async () => new Response("No endpoints found for provider/free:free", { status: 400 });
+
+    const results = await executeModels(freeConfig, bundle, "key", fetchImpl as typeof fetch);
+
+    expect(results[0]).toMatchObject({ alias: "free", ok: false });
+    expect(results[0]?.error).toContain("No endpoints found for provider/free:free");
+    expect(results[0]?.error).toMatch(/free model.*dataCollection: deny/i);
+  });
+
   it("starts configured model requests concurrently", async () => {
     let inFlight = 0;
     let maxInFlight = 0;

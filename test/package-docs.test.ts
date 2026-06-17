@@ -38,11 +38,48 @@ describe("packaging and docs compliance", () => {
       "or-review sdd",
       "or-review diff",
       "or-review files",
+      "or-review doctor",
       "or-review assess",
       "skill-template/SKILL.md",
       "Live Smoke"
     ]) {
       expect(readme).toContain(expected);
+    }
+  });
+
+  it("documents reliability hardening behavior for env loading, pricing, failures, and free models", async () => {
+    const readme = await readText("README.md");
+
+    for (const expected of [
+      ".env",
+      "--env-file",
+      "\"pricingSource\": \"openrouter\"",
+      "\"pricingSource\": \"pinned\"",
+      ".or-review/cache/openrouter-models.json",
+      "All models failed",
+      "partial",
+      "dataCollection: deny",
+      "maxUsdPerRun\": 0",
+      "cheap paid"
+    ]) {
+      expect(readme).toContain(expected);
+    }
+  });
+
+  it("keeps the skill template aligned with reliability hardening operations", async () => {
+    const skill = await readText("skill-template/SKILL.md");
+
+    for (const expected of [
+      "--env-file",
+      "OPENROUTER_API_KEY",
+      "escalated",
+      "report.json",
+      "exit code 0",
+      "dataCollection: deny",
+      "free models",
+      "cheap paid"
+    ]) {
+      expect(skill).toContain(expected);
     }
   });
 

@@ -109,6 +109,20 @@ function isStructuredOutputRejection(error: unknown): boolean {
   return message.includes("response_format") || message.includes("json_schema") || message.includes("structured output");
 }
 
+function isFreeModel(modelId: string, pricing: OrReviewConfig["models"][number]["pricing"]): boolean {
+  return modelId.includes(":free") || (pricing?.inputUsdPerMillionTokens === 0 && pricing.outputUsdPerMillionTokens === 0);
+}
+
+function normalizeExecutionError(error: unknown, config: OrReviewConfig, model: OrReviewConfig["models"][number]): string {
+  const message = (error as Error).message;
+  const lower = message.toLowerCase();
+  const providerRoutingFailure = lower.includes("no endpoints") || lower.includes("provider") || lower.includes("routing");
+  if (config.provider.dataCollection === "deny" && isFreeModel(model.id, model.pricing) && providerRoutingFailure) {
+    return `${message}\nHint: free model endpoints may be unavailable under dataCollection: deny.`;
+  }
+  return message;
+}
+
 async function callOpenRouter(
   fetchImpl: FetchLike,
   apiKey: string,
@@ -181,7 +195,7 @@ export async function executeModels(
           ok: false,
           raw: raw ?? null,
           findings: [],
-          error: (error as Error).message
+          error: normalizeExecutionError(error, config, model)
         };
       }
     })

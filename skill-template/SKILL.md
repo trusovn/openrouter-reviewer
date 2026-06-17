@@ -10,9 +10,14 @@ Use this optional wrapper while working in the repository being reviewed, after 
 Prerequisites:
 
 - `or-review --help` succeeds from the reviewed repository.
-- The reviewed repository has `or-review.config.json` with explicit model IDs and pricing.
-- `OPENROUTER_API_KEY` is set in the shell environment.
+- The reviewed repository has `or-review.config.json` with explicit model IDs.
+- `OPENROUTER_API_KEY` is available from the shell, repository `.env`, or an explicit `--env-file`; prefer passing `--env-file <path>` instead of printing secrets.
 - The reviewed repository leaves `.or-review/` untracked, usually by adding it to `.gitignore`.
+- `or-review doctor` passes, or any failure is understood before spending review budget.
+
+If a sandboxed command fails with a likely network error such as `fetch failed`, rerun the same `or-review` command with escalated network approval. Do not treat exit code 0 as enough evidence of a useful review; read `report.json` and confirm at least one model returned `ok`.
+
+The free models can fail under `dataCollection: deny` because compatible OpenRouter endpoints may be unavailable. Keep at least one cheap paid reviewer configured for stable automated reviews.
 
 1. Choose the command:
    - If the user names an SDD feature slug or asks for feature artifact review, run `or-review sdd --feature <slug> --instruction "<goal>"`.

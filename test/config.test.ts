@@ -9,6 +9,28 @@ async function tempDir(): Promise<string> {
 }
 
 describe("config", () => {
+  it("parses dotenv syntax without overriding shell precedence", async () => {
+    const configModule = (await import("../src/config.js")) as {
+      parseEnvFile?: (source: string) => Record<string, string>;
+    };
+
+    expect(configModule.parseEnvFile).toBeTypeOf("function");
+    expect(
+      configModule.parseEnvFile?.(`
+# comment
+OPENROUTER_API_KEY='from-dotenv'
+OPENROUTER_BASE_URL="https://example.test/v1"
+UNQUOTED=value
+EMPTY=
+`)
+    ).toEqual({
+      OPENROUTER_API_KEY: "from-dotenv",
+      OPENROUTER_BASE_URL: "https://example.test/v1",
+      UNQUOTED: "value",
+      EMPTY: ""
+    });
+  });
+
   it("writes an init skeleton that validates without hardcoded model ids", async () => {
     const cwd = await tempDir();
     const configPath = await writeInitialConfig(cwd);
@@ -54,5 +76,39 @@ describe("config", () => {
 
     expect(applyCliOverrides(config, { maxFileBytes: 10, assessmentLedgerPath: "/tmp/ledger.jsonl" }).limits.maxFileBytes).toBe(10);
     expect(() => assertReviewConfigReady(config)).not.toThrow();
+  });
+
+  it("defaults to OpenRouter pricing and requires pinned pricing only in pinned mode", () => {
+    const defaultConfig = configSchema.parse({
+      models: [{ alias: "a", id: "model-a" }]
+    }) as { pricingSource?: string; models: Array<{ pricing?: unknown }> };
+
+    expect(defaultConfig.pricingSource).toBe("openrouter");
+    expect(defaultConfig.models[0]?.pricing).toBeUndefined();
+
+    const pinnedConfig = configSchema.parse({
+      pricingSource: "pinned",
+      models: [{ alias: "a", id: "model-a", pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 2 } }]
+    }) as { pricingSource?: string };
+    expect(pinnedConfig.pricingSource).toBe("pinned");
+
+    expect(() =>
+      configSchema.parse({
+        pricingSource: "pinned",
+        models: [{ alias: "a", id: "model-a" }]
+      })
+    ).toThrow("pricing");
+  });
+
+  it("accepts zero-dollar caps while still rejecting negative caps", () => {
+    const config = configSchema.parse({
+      models: [{ alias: "free", id: "provider/free:free", maxUsdPerRun: 0 }],
+      budget: { maxUsdPerRun: 0, maxOutputTokensPerModel: 100 }
+    });
+
+    expect(config.models[0]?.maxUsdPerRun).toBe(0);
+    expect(config.budget.maxUsdPerRun).toBe(0);
+    expect(() => configSchema.parse({ models: [{ alias: "a", id: "model-a", maxUsdPerRun: -0.01 }] })).toThrow();
+    expect(() => configSchema.parse({ models: [{ alias: "a", id: "model-a" }], budget: { maxUsdPerRun: -0.01 } })).toThrow();
   });
 });

@@ -101,4 +101,18 @@ describe("collectors", () => {
     expect(bundle.context).toContain("include");
     expect(bundle.context).not.toContain("exclude");
   });
+
+  it("excludes explicit .env files from review context", async () => {
+    const cwd = await tempDir();
+    await writeFile(path.join(cwd, ".env"), "OPENROUTER_API_KEY=secret\n", "utf8");
+    await writeFile(path.join(cwd, ".env.local"), "OPENROUTER_API_KEY=local-secret\n", "utf8");
+    await writeFile(path.join(cwd, "safe.txt"), "include", "utf8");
+
+    const bundle = await collectFilesContext(cwd, [".env", ".env.local", "safe.txt"], "review", config);
+
+    expect(bundle.context).toContain("include");
+    expect(bundle.context).not.toContain("secret");
+    expect(bundle.preview).toContain(".env: secret-like file name");
+    expect(bundle.preview).toContain(".env.local: secret-like file name");
+  });
 });

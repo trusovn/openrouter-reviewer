@@ -56,6 +56,41 @@ function successfulResult(): ModelExecutionResult[] {
   ];
 }
 
+function failedResults(): ModelExecutionResult[] {
+  return [
+    {
+      alias: "a",
+      modelId: "model-a",
+      ok: false,
+      raw: { error: "a failed" },
+      findings: [],
+      error: "a failed"
+    },
+    {
+      alias: "b",
+      modelId: "model-b",
+      ok: false,
+      raw: { error: "b failed" },
+      findings: [],
+      error: "b failed"
+    }
+  ];
+}
+
+function mixedResults(): ModelExecutionResult[] {
+  return [
+    ...successfulResult(),
+    {
+      alias: "b",
+      modelId: "model-b",
+      ok: false,
+      raw: { error: "b failed" },
+      findings: [],
+      error: "b failed"
+    }
+  ];
+}
+
 async function parse(cwd: string, args: string[], logs: string[], executeModels = vi.fn(async () => successfulResult())) {
   const program = createProgram({ cwd, executeModels, log: (message) => logs.push(message) });
   program.exitOverride();
@@ -77,6 +112,7 @@ describe("or-review CLI", () => {
     expect(help).toContain("sdd");
     expect(help).toContain("diff");
     expect(help).toContain("files");
+    expect(help).toContain("doctor");
     expect(help).toContain("assess");
   });
 
@@ -85,6 +121,7 @@ describe("or-review CLI", () => {
 
     expect(help).toContain("--file <path...>");
     expect(help).toContain("--instruction <goal>");
+    expect(help).toContain("--env-file <path>");
   });
 
   it("runs files review, prints report paths, and records an assessment", async () => {
@@ -111,6 +148,48 @@ describe("or-review CLI", () => {
     expect(assessLogs.some((line) => line.includes("assessment.json"))).toBe(true);
     expect(await readFile(path.join(cwd, ".or-review", "runs", runId, "assessment.json"), "utf8")).toContain("useful");
     expect(await readFile(path.join(cwd, "ledger.jsonl"), "utf8")).toContain("useful");
+  });
+
+  it("loads OPENROUTER_API_KEY from default .env before review commands require it", async () => {
+    const cwd = await tempDir();
+    delete process.env.OPENROUTER_API_KEY;
+    await writeConfig(cwd);
+    await writeFile(path.join(cwd, ".env"), "OPENROUTER_API_KEY=dotenv-key\n", "utf8");
+    await writeFile(path.join(cwd, "target.txt"), "review me", "utf8");
+    const executeModels = vi.fn(async () => successfulResult());
+
+    await parse(cwd, ["files", "--file", "target.txt", "--instruction", "review"], [], executeModels);
+
+    expect(executeModels).toHaveBeenCalledOnce();
+    expect((executeModels.mock.calls as unknown[][])[0]?.[2]).toBe("dotenv-key");
+  });
+
+  it("uses an explicit env file instead of default discovery for missing shell values", async () => {
+    const cwd = await tempDir();
+    delete process.env.OPENROUTER_API_KEY;
+    await writeConfig(cwd);
+    await writeFile(path.join(cwd, ".env"), "OPENROUTER_API_KEY=default-env-key\n", "utf8");
+    await writeFile(path.join(cwd, ".env.local"), "OPENROUTER_API_KEY=explicit-env-key\n", "utf8");
+    await writeFile(path.join(cwd, "target.txt"), "review me", "utf8");
+    const executeModels = vi.fn(async () => successfulResult());
+
+    await parse(cwd, ["files", "--env-file", ".env.local", "--file", "target.txt", "--instruction", "review"], [], executeModels);
+
+    expect(executeModels).toHaveBeenCalledOnce();
+    expect((executeModels.mock.calls as unknown[][])[0]?.[2]).toBe("explicit-env-key");
+  });
+
+  it("fails clearly when an explicit env file is missing", async () => {
+    const cwd = await tempDir();
+    delete process.env.OPENROUTER_API_KEY;
+    await writeConfig(cwd);
+    await writeFile(path.join(cwd, "target.txt"), "review me", "utf8");
+    const executeModels = vi.fn(async () => successfulResult());
+
+    await expect(parse(cwd, ["files", "--env-file", ".env.missing", "--file", "target.txt", "--instruction", "review"], [], executeModels)).rejects.toThrow(
+      "Env file not found"
+    );
+    expect(executeModels).not.toHaveBeenCalled();
   });
 
   it("runs sdd and diff review commands against fixture repos", async () => {
@@ -145,6 +224,56 @@ describe("or-review CLI", () => {
     await expect(program.parseAsync(["files", "--instruction", "review"], { from: "user" })).rejects.toThrow(
       'process.exit unexpectedly called with "1"'
     );
+  });
+
+  it("writes reports but rejects when every configured model fails", async () => {
+    const cwd = await tempDir();
+    process.env.OPENROUTER_API_KEY = "test-key";
+    await writeConfig(cwd, {
+      models: [
+        { alias: "a", id: "model-a", pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 } },
+        { alias: "b", id: "model-b", pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 } }
+      ]
+    });
+    await writeFile(path.join(cwd, "target.txt"), "review me", "utf8");
+    const logs: string[] = [];
+    const executeModels = vi.fn(async () => failedResults());
+
+    await expect(parse(cwd, ["files", "--file", "target.txt", "--instruction", "review"], logs, executeModels)).rejects.toThrow("All 2 models failed");
+
+    const runIds = await readdir(path.join(cwd, ".or-review", "runs"));
+    expect(runIds).toHaveLength(1);
+    const report = JSON.parse(await readFile(path.join(cwd, ".or-review", "runs", runIds[0] ?? "", "report.json"), "utf8")) as {
+      models: Array<{ ok: boolean; error?: string }>;
+    };
+    expect(report.models).toEqual([
+      { alias: "a", modelId: "model-a", ok: false, error: "a failed" },
+      { alias: "b", modelId: "model-b", ok: false, error: "b failed" }
+    ]);
+    expect(logs.some((line) => line.endsWith("report.md"))).toBe(true);
+  });
+
+  it("keeps partial reports successful when at least one configured model succeeds", async () => {
+    const cwd = await tempDir();
+    process.env.OPENROUTER_API_KEY = "test-key";
+    await writeConfig(cwd, {
+      models: [
+        { alias: "a", id: "model-a", pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 } },
+        { alias: "b", id: "model-b", pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 } }
+      ]
+    });
+    await writeFile(path.join(cwd, "target.txt"), "review me", "utf8");
+    const executeModels = vi.fn(async () => mixedResults());
+
+    await parse(cwd, ["files", "--file", "target.txt", "--instruction", "review"], [], executeModels);
+
+    const runIds = await readdir(path.join(cwd, ".or-review", "runs"));
+    const report = JSON.parse(await readFile(path.join(cwd, ".or-review", "runs", runIds[0] ?? "", "report.json"), "utf8")) as {
+      findings: unknown[];
+      models: Array<{ ok: boolean }>;
+    };
+    expect(report.findings).toHaveLength(1);
+    expect(report.models.map((model) => model.ok)).toEqual([true, false]);
   });
 
   it("refuses unfilled init config and over-budget runs before model execution", async () => {

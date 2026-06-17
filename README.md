@@ -44,7 +44,7 @@ cd /path/to/target-repo
 or-review init
 ```
 
-This writes `or-review.config.json` with empty model IDs. Fill in explicit OpenRouter model IDs and pricing before the first review; the CLI has no hardcoded model defaults.
+This writes `or-review.config.json` with empty model IDs. Fill in explicit OpenRouter model IDs before the first review; the CLI has no hardcoded model defaults.
 
 Minimal shape:
 
@@ -55,13 +55,10 @@ Minimal shape:
       "alias": "primary-reviewer",
       "id": "openrouter/model-id",
       "perspective": "general code and artifact reviewer",
-      "maxUsdPerRun": 0.1,
-      "pricing": {
-        "inputUsdPerMillionTokens": 0,
-        "outputUsdPerMillionTokens": 0
-      }
+      "maxUsdPerRun": 0.1
     }
   ],
+  "pricingSource": "openrouter",
   "provider": { "dataCollection": "deny", "zdr": false },
   "budget": { "maxUsdPerRun": 0.25, "maxOutputTokensPerModel": 2000 },
   "limits": { "maxFileBytes": 200000, "maxContextChars": 120000 },
@@ -76,7 +73,9 @@ Config precedence:
 2. `./or-review.config.json`
 3. `~/.config/or-review/config.json`
 
-Set `OPENROUTER_API_KEY` before running a review.
+Set `OPENROUTER_API_KEY` before running a review. Review commands and `or-review doctor` auto-load a repository-local `.env` for missing environment keys, and you can pass an explicit file with `--env-file .env.local`.
+
+For stable automation, configure at least one cheap paid reviewer. Free models can be useful for smoke tests, but they may be unavailable under `dataCollection: deny`.
 
 ## Output And Gitignore
 
@@ -105,12 +104,14 @@ Keep `or-review.config.json` in the reviewed repository if the team should share
 or-review sdd --feature job-search --instruction "Review acceptance criteria coverage"
 or-review diff --base HEAD --instruction "Review this change for regressions"
 or-review files --file docs/features/job-search/spec.md --instruction "Review this spec"
+or-review doctor
 or-review assess <run-id> --model primary-reviewer --usefulness 4 --note "Caught one real issue"
 ```
 
 Useful overrides:
 
 ```bash
+or-review doctor --env-file .env.local
 or-review diff --base HEAD --instruction "Review this diff" --max-usd-per-run 0.10
 or-review files --file README.md --instruction "Review docs" --reports-dir .or-review/runs
 or-review assess <run-id> --model primary-reviewer --usefulness 3 --note "Partially useful" --assessment-ledger-path ./assessments.jsonl
@@ -126,19 +127,36 @@ OpenRouter requests include provider privacy preferences from config:
 { "dataCollection": "deny", "zdr": false }
 ```
 
+With `dataCollection: deny`, free models may fail when OpenRouter cannot find a matching privacy-compatible endpoint. The failure is preserved in `report.md` and `report.json`.
+
 `context-preview.md` is written with the assembled review context, included files, skipped files, truncated inputs, and redaction notes so the run can be audited locally.
 
 ## Budget
 
-Every review performs a local cost preflight before any OpenRouter call. Estimates use configured model pricing, assembled context size, and `budget.maxOutputTokensPerModel`.
+Every review performs a local cost preflight before any OpenRouter call. By default, `"pricingSource": "openrouter"` resolves current pricing from OpenRouter and caches model metadata briefly at `.or-review/cache/openrouter-models.json`. Run `or-review doctor` to refresh and validate pricing, API key availability, OpenRouter reachability, and selected model usability.
+
+Use `"pricingSource": "pinned"` only when you need reproducible or offline estimates. In pinned mode, provide `models[].pricing` in config.
 
 The CLI fails closed when:
 
-- a configured model is missing `pricing`
+- pricing cannot be resolved from OpenRouter or pinned config
 - a model estimate exceeds `models[].maxUsdPerRun`
 - the total estimate exceeds `budget.maxUsdPerRun`
 
 Output token caps are passed to each model request.
+
+Free-only smoke configs may use zero caps:
+
+```json
+{
+  "models": [{ "alias": "free-smoke", "id": "provider/model:free", "maxUsdPerRun": 0 }],
+  "pricingSource": "openrouter",
+  "provider": { "dataCollection": "deny", "zdr": false },
+  "budget": { "maxUsdPerRun": 0, "maxOutputTokensPerModel": 1000 }
+}
+```
+
+If every configured reviewer fails, the command still writes reports and exits nonzero with `All models failed`. If at least one reviewer succeeds, the command writes a partial report and exits zero.
 
 ## Optional Skill
 
@@ -147,7 +165,7 @@ Output token caps are passed to each model request.
 Use the skill when you want Codex, while working in another repository, to call the external reviewer and then judge the result.
 
 1. Install or link `or-review` from this repository and confirm `or-review --help` works on your shell `PATH`.
-2. In the target repository, run `or-review init`, edit `or-review.config.json`, set `OPENROUTER_API_KEY`, and add `.or-review/` to that repository's `.gitignore`.
+2. In the target repository, run `or-review init`, edit `or-review.config.json`, set `OPENROUTER_API_KEY` directly or through `.env`/`--env-file`, run `or-review doctor`, and add `.or-review/` to that repository's `.gitignore`.
 3. Copy or install `skill-template/SKILL.md` as a Codex skill, for example under your Codex skills directory as `openrouter-review/SKILL.md`.
 4. Start Codex in the target repository and use a trigger phrase such as "review externally", "verify with OpenRouter", or "do this and review externally".
 
@@ -171,6 +189,7 @@ Only run a live smoke when you intentionally want to spend OpenRouter budget:
 
 ```bash
 export OPENROUTER_API_KEY=...
+or-review doctor
 or-review files --file README.md --instruction "Smoke test the reviewer packaging and docs"
 ```
 

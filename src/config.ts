@@ -9,7 +9,7 @@ export const modelConfigSchema = z.object({
   alias: z.string().min(1),
   id: z.string(),
   perspective: z.string().optional(),
-  maxUsdPerRun: z.number().positive().optional(),
+  maxUsdPerRun: z.number().nonnegative().optional(),
   pricing: z
     .object({
       inputUsdPerMillionTokens: z.number().nonnegative(),
@@ -18,42 +18,57 @@ export const modelConfigSchema = z.object({
     .optional()
 });
 
-export const configSchema = z.object({
-  models: z.array(modelConfigSchema).min(1),
-  provider: z
-    .object({
-      dataCollection: z.literal("deny").default("deny"),
-      zdr: z.literal(false).default(false)
-    })
-    .default({ dataCollection: "deny", zdr: false }),
-  budget: z
-    .object({
-      maxUsdPerRun: z.number().positive().default(0.25),
-      maxOutputTokensPerModel: z.number().int().positive().default(2000)
-    })
-    .default({ maxUsdPerRun: 0.25, maxOutputTokensPerModel: 2000 }),
-  limits: z
-    .object({
-      maxFileBytes: z.number().int().positive().default(200_000),
-      maxContextChars: z.number().int().positive().default(120_000)
-    })
-    .default({ maxFileBytes: 200_000, maxContextChars: 120_000 }),
-  reports: z
-    .object({
-      dir: z.string().min(1).default(".or-review/runs")
-    })
-    .default({ dir: ".or-review/runs" }),
-  assessmentLedger: z
-    .object({
-      path: z.string().min(1).optional()
-    })
-    .default({})
-});
+export const configSchema = z
+  .object({
+    pricingSource: z.enum(["openrouter", "pinned"]).default("openrouter"),
+    models: z.array(modelConfigSchema).min(1),
+    provider: z
+      .object({
+        dataCollection: z.literal("deny").default("deny"),
+        zdr: z.literal(false).default(false)
+      })
+      .default({ dataCollection: "deny", zdr: false }),
+    budget: z
+      .object({
+        maxUsdPerRun: z.number().nonnegative().default(0.25),
+        maxOutputTokensPerModel: z.number().int().positive().default(2000)
+      })
+      .default({ maxUsdPerRun: 0.25, maxOutputTokensPerModel: 2000 }),
+    limits: z
+      .object({
+        maxFileBytes: z.number().int().positive().default(200_000),
+        maxContextChars: z.number().int().positive().default(120_000)
+      })
+      .default({ maxFileBytes: 200_000, maxContextChars: 120_000 }),
+    reports: z
+      .object({
+        dir: z.string().min(1).default(".or-review/runs")
+      })
+      .default({ dir: ".or-review/runs" }),
+    assessmentLedger: z
+      .object({
+        path: z.string().min(1).optional()
+      })
+      .default({})
+  })
+  .superRefine((config, context) => {
+    if (config.pricingSource !== "pinned") return;
+    for (const [index, model] of config.models.entries()) {
+      if (!model.pricing) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "pricing is required when pricingSource is pinned",
+          path: ["models", index, "pricing"]
+        });
+      }
+    }
+  });
 
 export type OrReviewConfig = z.infer<typeof configSchema>;
 
 export type CliConfigOverrides = {
   configPath?: string;
+  envFile?: string;
   maxUsdPerRun?: number;
   maxOutputTokensPerModel?: number;
   maxFileBytes?: number;
@@ -93,6 +108,49 @@ export async function loadConfig(cwd: string, overrides: CliConfigOverrides = {}
   return applyCliOverrides(config, overrides);
 }
 
+export function parseEnvFile(source: string): Record<string, string> {
+  const parsed: Record<string, string> = {};
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const separator = line.indexOf("=");
+    if (separator === -1) continue;
+    const key = line.slice(0, separator).trim();
+    if (!key) continue;
+    let value = line.slice(separator + 1).trim();
+    if (
+      (value.startsWith("'") && value.endsWith("'") && value.length >= 2) ||
+      (value.startsWith("\"") && value.endsWith("\"") && value.length >= 2)
+    ) {
+      value = value.slice(1, -1);
+    }
+    parsed[key] = value;
+  }
+  return parsed;
+}
+
+export async function loadEnvironment(
+  cwd: string,
+  options: { envFile?: string; env?: NodeJS.ProcessEnv } = {}
+): Promise<NodeJS.ProcessEnv> {
+  const env = { ...(options.env ?? process.env) };
+  const envPath = options.envFile ? path.resolve(cwd, options.envFile) : path.join(cwd, ".env");
+
+  if (!existsSync(envPath)) {
+    if (options.envFile) throw new UserError(`Env file not found: ${envPath}`);
+    return env;
+  }
+
+  const values = parseEnvFile(await readFile(envPath, "utf8"));
+  for (const [key, value] of Object.entries(values)) {
+    if (env[key] === undefined) {
+      env[key] = value;
+      if (!options.env) process.env[key] = value;
+    }
+  }
+  return env;
+}
+
 export function applyCliOverrides(config: OrReviewConfig, overrides: CliConfigOverrides): OrReviewConfig {
   const merged: OrReviewConfig = {
     ...config,
@@ -126,17 +184,14 @@ export async function writeInitialConfig(cwd: string, destination = projectConfi
   }
 
   const skeleton = {
-    $schemaNote: "Remove this note if desired. Fill models with explicit OpenRouter model IDs and pricing before first review.",
+    $schemaNote: "Remove this note if desired. Fill models with explicit OpenRouter model IDs before first review.",
+    pricingSource: "openrouter",
     models: [
       {
         alias: "primary-reviewer",
         id: "",
         perspective: "general code and artifact reviewer",
-        maxUsdPerRun: 0.1,
-        pricing: {
-          inputUsdPerMillionTokens: 0,
-          outputUsdPerMillionTokens: 0
-        }
+        maxUsdPerRun: 0.1
       }
     ],
     provider: {
