@@ -74,6 +74,160 @@ describe("reports and assessments", () => {
     expect((await readFile(path.join(cwd, "ledger.jsonl"), "utf8")).trim().split("\n")).toHaveLength(3);
   });
 
+  it("includes typed model failure metadata in json and markdown reports", async () => {
+    const cwd = await tempDir();
+    const config = configSchema.parse({
+      models: [
+        { alias: "rate", id: "model-rate", pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 } },
+        { alias: "invalid", id: "model-invalid", pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 } }
+      ],
+      reports: { dir: ".or-review/runs" }
+    });
+
+    const written = await writeRunReport(cwd, config, bundle, [
+      {
+        alias: "rate",
+        modelId: "model-rate",
+        ok: false,
+        raw: null,
+        findings: [],
+        error: "OpenRouter/provider rate limited this model. Retried 2 time(s); retry_after_seconds=3.",
+        failureKind: "rate_limited",
+        attempts: 3,
+        retryAfterSeconds: 3
+      },
+      {
+        alias: "invalid",
+        modelId: "model-invalid",
+        ok: false,
+        raw: { choices: [{ message: { content: null } }] },
+        findings: [],
+        error: "Model returned invalid structured output: Model response content was null. See raw/invalid.json.",
+        failureKind: "invalid_structured_output",
+        attempts: 1
+      }
+    ]);
+
+    const reportJson = JSON.parse(await readFile(written.reportJsonPath, "utf8")) as {
+      models: Array<{ failureKind?: string; attempts?: number; retryAfterSeconds?: number }>;
+    };
+    expect(reportJson.models[0]).toMatchObject({
+      failureKind: "rate_limited",
+      attempts: 3,
+      retryAfterSeconds: 3
+    });
+    expect(reportJson.models[1]).toMatchObject({
+      failureKind: "invalid_structured_output",
+      attempts: 1
+    });
+
+    const markdown = await readFile(written.reportMdPath, "utf8");
+    expect(markdown).toContain(
+      "rate (model-rate): failed - rate_limited - OpenRouter/provider rate limited this model. Retried 2 time(s); retry_after_seconds=3."
+    );
+    expect(markdown).toContain(
+      "invalid (model-invalid): failed - invalid_structured_output - Model returned invalid structured output"
+    );
+  });
+
+  it("writes failed raw output as safe attempt diagnostics", async () => {
+    const cwd = await tempDir();
+    const config = configSchema.parse({
+      models: [{ alias: "rate", id: "model-rate", pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 } }],
+      reports: { dir: ".or-review/runs" }
+    });
+
+    const written = await writeRunReport(cwd, config, bundle, [
+      {
+        alias: "rate",
+        modelId: "model-rate",
+        ok: false,
+        raw: null,
+        findings: [],
+        error: "OpenRouter/provider rate limited this model. Retried 2 time(s); retry_after_seconds=3.",
+        failureKind: "rate_limited",
+        attempts: 3,
+        retryAfterSeconds: 3,
+        attemptDiagnostics: [
+          {
+            mode: "structured",
+            status: 429,
+            retryAfterSeconds: 3,
+            message: "Provider returned rate limit from Venice",
+            retried: true
+          },
+          {
+            mode: "structured",
+            status: 429,
+            retryAfterSeconds: 3,
+            message: "Provider returned rate limit from Venice",
+            retried: false
+          }
+        ]
+      } as never
+    ]);
+
+    const rawText = await readFile(path.join(written.runDir, "raw", "rate.json"), "utf8");
+    const rawJson = JSON.parse(rawText) as {
+      ok?: boolean;
+      failureKind?: string;
+      attempts?: Array<{ mode?: string; status?: number; retryAfterSeconds?: number; message?: string; retried?: boolean }>;
+    };
+
+    expect(rawJson).toMatchObject({
+      ok: false,
+      failureKind: "rate_limited",
+      attempts: [
+        {
+          mode: "structured",
+          status: 429,
+          retryAfterSeconds: 3,
+          message: "Provider returned rate limit from Venice",
+          retried: true
+        },
+        {
+          mode: "structured",
+          status: 429,
+          retryAfterSeconds: 3,
+          message: "Provider returned rate limit from Venice",
+          retried: false
+        }
+      ]
+    });
+    expect(rawText).not.toContain("Authorization");
+    expect(rawText).not.toContain("Bearer");
+    expect(rawText).not.toContain("sk-or-");
+    expect(rawText).not.toContain(bundle.context);
+    expect(rawText).not.toContain(bundle.instruction);
+  });
+
+  it("renders invalid structured output failures without implementation TypeErrors", async () => {
+    const cwd = await tempDir();
+    const config = configSchema.parse({
+      models: [{ alias: "invalid", id: "model-invalid", pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 } }],
+      reports: { dir: ".or-review/runs" }
+    });
+
+    const written = await writeRunReport(cwd, config, bundle, [
+      {
+        alias: "invalid",
+        modelId: "model-invalid",
+        ok: false,
+        raw: { choices: [{ message: { content: null } }] },
+        findings: [],
+        error: "Model returned invalid structured output: Model response content was null. See raw/invalid.json.",
+        failureKind: "invalid_structured_output",
+        attempts: 1
+      }
+    ]);
+
+    const markdown = await readFile(written.reportMdPath, "utf8");
+    const json = await readFile(written.reportJsonPath, "utf8");
+    expect(markdown).toContain("invalid structured output");
+    expect(markdown).not.toContain("Cannot read properties");
+    expect(json).not.toContain("Cannot read properties");
+  });
+
   it("rejects invalid assessment inputs", async () => {
     const cwd = await tempDir();
     const config = configSchema.parse({

@@ -117,6 +117,8 @@ or-review files --file README.md --instruction "Review docs" --reports-dir .or-r
 or-review assess <run-id> --model primary-reviewer --usefulness 3 --note "Partially useful" --assessment-ledger-path ./assessments.jsonl
 ```
 
+For large context reviews, prefer `or-review diff --base HEAD` when a diff is available, or `or-review files --file <small-set>` with a narrow set of paths. Broad inputs increase the chance of invalid structured output; if one model fails and another succeeds, use the successful partial report and assess the failed model as low usefulness. If every model fails on a large context, retry with a narrower `files` or `diff` scope before assuming the tool is broken.
+
 ## Privacy
 
 The CLI excludes binary files, ignored files, `.env*`, secret-like file names, and files over `limits.maxFileBytes`. It redacts obvious key/token/password fields and private-key blocks before sending context.

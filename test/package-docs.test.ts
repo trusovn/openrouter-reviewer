@@ -83,6 +83,23 @@ describe("packaging and docs compliance", () => {
     }
   });
 
+  it("documents large-context operational guidance in README and skill template", async () => {
+    const readme = await readText("README.md");
+    const skill = await readText("skill-template/SKILL.md");
+
+    for (const text of [readme, skill]) {
+      for (const expected of [
+        "or-review diff --base HEAD",
+        "or-review files --file",
+        "narrower",
+        "invalid structured output",
+        "large context"
+      ]) {
+        expect(text).toContain(expected);
+      }
+    }
+  });
+
   it("keeps the handoff plan inside this repository", async () => {
     const plan = await readText("docs/plans/openrouter-reviewer.md");
 
