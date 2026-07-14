@@ -9,7 +9,7 @@
   },
   "files": [
     "dist/src",
-    "skill-template",
+    "skills/openrouter-review",
     "README.md"
   ],
   "scripts": {

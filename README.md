@@ -162,13 +162,13 @@ If every configured reviewer fails, the command still writes reports and exits n
 
 ## Optional Skill
 
-`skill-template/SKILL.md` contains a Codex skill wrapper template for "review externally", "verify with OpenRouter", and "do this and review externally" workflows. It is optional; humans can use the CLI directly.
+`skills/openrouter-review/SKILL.md` contains the Codex skill wrapper for "review externally", "verify with OpenRouter", and "do this and review externally" workflows. It is optional; humans can use the CLI directly.
 
 Use the skill when you want Codex, while working in another repository, to call the external reviewer and then judge the result.
 
 1. Install or link `or-review` from this repository and confirm `or-review --help` works on your shell `PATH`.
 2. In the target repository, run `or-review init`, edit `or-review.config.json`, set `OPENROUTER_API_KEY` directly or through `.env`/`--env-file`, run `or-review doctor`, and add `.or-review/` to that repository's `.gitignore`.
-3. Copy or install `skill-template/SKILL.md` as a Codex skill, for example under your Codex skills directory as `openrouter-review/SKILL.md`.
+3. Copy or install `skills/openrouter-review/SKILL.md` as a Codex skill, for example under your Codex skills directory as `openrouter-review/SKILL.md`.
 4. Start Codex in the target repository and use a trigger phrase such as "review externally", "verify with OpenRouter", or "do this and review externally".
 
 The skill chooses the CLI mode from the user request:

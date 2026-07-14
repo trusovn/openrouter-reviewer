@@ -18,7 +18,7 @@ describe("packaging and docs compliance", () => {
 
     expect(packageJson.packageManager).toMatch(/^npm@/);
     expect(packageJson.bin["or-review"]).toBe("./dist/src/cli.js");
-    expect(packageJson.files).toEqual(["dist/src", "skill-template", "README.md"]);
+    expect(packageJson.files).toEqual(["dist/src", "skills/openrouter-review", "README.md"]);
     expect(packageJson.files).not.toContain(".or-review");
     expect(packageJson.files).not.toContain("test");
     expect(packageJson.files).not.toContain("node_modules");
@@ -40,7 +40,7 @@ describe("packaging and docs compliance", () => {
       "or-review files",
       "or-review doctor",
       "or-review assess",
-      "skill-template/SKILL.md",
+      "skills/openrouter-review/SKILL.md",
       "Live Smoke"
     ]) {
       expect(readme).toContain(expected);
@@ -67,7 +67,7 @@ describe("packaging and docs compliance", () => {
   });
 
   it("keeps the skill template aligned with reliability hardening operations", async () => {
-    const skill = await readText("skill-template/SKILL.md");
+    const skill = await readText("skills/openrouter-review/SKILL.md");
 
     for (const expected of [
       "--env-file",
@@ -85,7 +85,7 @@ describe("packaging and docs compliance", () => {
 
   it("documents large-context operational guidance in README and skill template", async () => {
     const readme = await readText("README.md");
-    const skill = await readText("skill-template/SKILL.md");
+    const skill = await readText("skills/openrouter-review/SKILL.md");
 
     for (const text of [readme, skill]) {
       for (const expected of [
